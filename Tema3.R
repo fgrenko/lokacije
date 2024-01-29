@@ -167,47 +167,18 @@ fit_var = gstat::fit.variogram(object = var, model = gstat::vgm(psill = 0.2, nug
 
 grid_cells <- st_make_grid(st_bbox(spatial_points), cellsize = c(0.1, 0.1))
 
-# Kriging interpolation
 krig <- gstat::krige(formula = temperature~1, locations = spatial_points, newdata = grid_cells, model = fit_var)
 
-
-#do ovdje radi
 r <- raster(krig)
-krig_raster <- raster::rasterize(krig@coords, krig$var1.pred,
-                                 extent = extent(c(min(krig@coords[, 1]), max(krig@coords[, 1]),
-                                                   min(krig@coords[, 2]), max(krig@coords[, 2]))),
-                                 crs = st_crs(croatia_shapefile))
+r.m <- mask(r, croatia_shapefile)
 
-
-# Project raster to the same CRS as Croatia shapefile
-krig_raster <- raster::projectRaster(krig_raster, crs = st_crs(croatia_shapefile))
-
-# Mask the raster with the Croatia shapefile
-krig_raster_masked <- raster::mask(krig_raster, croatia_shapefile)
-
-
-# Create the map
-tm_shape(croatia_shapefile) +
-  tm_borders() +
-  tm_fill("kriged_temperature", palette = "RdYlBu", style = "cont", title = "Kriged Temperature") +
-  tm_layout +
-  tm_legend(outside = TRUE)
-
-
-raster_result <- rasterize(grid_cells, krig, field = 1)
 
 # Plot the kriged results with specified breaks and colors
-tm_shape(r.M) +
+tm_shape(r.m) +
   tm_raster(n=10,palette = "RdBu", 
-            title="Predicted temperature") 
-  
-  # Add the Croatia shapefile
-  tm_shape(croatia_shapefile) +
-  tm_borders(lwd = 1, col = "gray") +
-  
+            title="Predicted temperature") +
   # Add spatial points as dots
   tm_shape(spatial_points) + tm_dots(size = 0.2) +
-  
   # Add legend outside the map
   tm_layout(legend.outside = TRUE)
 
