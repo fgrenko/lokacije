@@ -1,22 +1,22 @@
 rm(list=ls())
-install.packages("sf")
+
 library(sf)
-# library(leaflet)
-# library(osmdata)
-# library(rvest)
-# library(dplyr)
-# library(lubridate)
-# library(tmaptools)
-# library(sp)
-# library(raster)
-# library(gstat)
-# library(tmap)
-# library(spatstat)
-# library(maptools)
-# library(raster)
+library(leaflet)
+library(osmdata)
+library(rvest)
+library(dplyr)
+library(lubridate)
+library(tmaptools)
+library(sp)
+library(raster)
+library(gstat)
+library(tmap)
+library(spatstat)
+library(raster)
+install.packages("rgdal")
 
 data_directory <- paste0(getwd(),"/data")
-croatia_shapefile <- read_sf("/Users/frangrenko/Developer/faks/lokacije/hr_1km.shp")
+croatia_shapefile <- read_sf(paste0(getwd(),"/hr_1km.shp"))
 scraper <- function() {
   if (length(list.files(data_directory)) > 0){
     return()
@@ -142,18 +142,6 @@ mark_locations <- function() {
   return(return_list)
 }
 
-spatial_points <- function(result_df) {
-  sf_pts <- st_as_sf(result_df, coords = c("longitude", "latitude"), crs = st_crs(4326))
-  
-  plot(sf_pts)
-  return(sf_pts)
-}
-
-
-
-
-
-
 scraper()
 mark_locations_data <- mark_locations()
 
@@ -161,41 +149,37 @@ locations <- mark_locations_data$locations
 stations <- mark_locations_data$stations
 temperatures <- mark_locations_data$temperatures
 
-spatial_points <- st_as_sf(stations, coords = c("longitude", "latitude"), crs = st_crs(4326))
+stanice <- data.frame(
+  x = stations$longitude,
+  y = stations$latitude,
+  temperature = temperatures
+)
 
-# Add temperature information to spatial points
-spatial_points$temperatures <- temperatures
+spatial_points = sp::SpatialPointsDataFrame(coords = cbind(stanice$x, stanice$y), data = stanice, proj4string = sp::CRS(projargs = "+init=epsg:32631"))
 
-variogram_model <- variogram(temperatures ~ 1, data = spatial_points)
+var = gstat::variogram(object = temperature~1, locations = spatial_points)
 
+fit_var = gstat::fit.variogram(object = var, model = gstat::vgm(psill = 10.1, nugget = 3.7, range = 90000, model = "Gau"))
 
-# Example initial values (you may need to adjust these based on your data)
-initial_values <- c(range = 1000, sill = 200, nugget = 20)
+grid_cells <- st_make_grid(st_bbox(spatial_points), cellsize = c(0.1, 0.1))
+krig = gstat::krige(formula = temperature~1, locations = spatial_points, newdata = grid_cells, model = fit_var)
 
-# Fit variogram with custom initial values
-kriging_model <- fit.variogram(variogram_model, model = vgm("Sph", psill = initial_values[2], range = initial_values[1], nugget = initial_values[3]))
+r <- raster(krig) #ovako je u vjezbama, ali ne dobivam ništa pod data
+r.m <- mask(r, croatia_shapefile)
 
-
-# Create a gstat object
-kriging_gstat <- gstat(id = "temperatures", formula = temperatures ~ 1, data = spatial_points, model = kriging_model)
-
-
-# Perform kriging
-# Perform kriging
-# Create a raster grid covering your study area
-raster_grid <- raster::raster(extent(croatia_shapefile), resolution = c(0.1, 0.1))
-
-# Convert the spatial points to a raster grid
-spatial_points_raster <- rasterize(spatial_points, raster_grid, field = "temperatures")
-
-kriging_result <- predict(kriging_gstat, raster_grid)
-kriging_raster <- raster::raster(kriging_result$var1.pred)
-
-# Plot the digital map with contours of Croatia
-tm_shape(croatia_shapefile) +
-  tm_borders() +
-  tm_raster(kriging_raster, palette = "RdYlBu", title = "Temperature") +
-  tm_layout(title = "Spatial Distribution of Temperature")
-
+# Plot the kriged results with specified breaks and colors
+tm_shape(r.M) +
+  tm_raster(n=10,palette = "RdBu", 
+            title="Predicted temperature") 
+  
+  # Add the Croatia shapefile
+  tm_shape(croatia_shapefile) +
+  tm_borders(lwd = 1, col = "gray") +
+  
+  # Add spatial points as dots
+  tm_shape(spatial_points) + tm_dots(size = 0.2) +
+  
+  # Add legend outside the map
+  tm_layout(legend.outside = TRUE)
 
 
