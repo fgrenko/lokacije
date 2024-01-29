@@ -13,10 +13,10 @@ library(gstat)
 library(tmap)
 library(spatstat)
 library(raster)
-install.packages("rgdal")
+library(rgdal)
 
 data_directory <- paste0(getwd(),"/data")
-croatia_shapefile <- read_sf(paste0(getwd(),"/hr_1km.shp"))
+croatia_shapefile <- read_sf("/Users/frangrenko/Developer/faks/lokacije/hr_1km.shp")
 scraper <- function() {
   if (length(list.files(data_directory)) > 0){
     return()
@@ -142,6 +142,11 @@ mark_locations <- function() {
   return(return_list)
 }
 
+
+
+
+
+
 scraper()
 mark_locations_data <- mark_locations()
 
@@ -154,18 +159,42 @@ stanice <- data.frame(
   y = stations$latitude,
   temperature = temperatures
 )
-
 spatial_points = sp::SpatialPointsDataFrame(coords = cbind(stanice$x, stanice$y), data = stanice, proj4string = sp::CRS(projargs = "+init=epsg:32631"))
 
 var = gstat::variogram(object = temperature~1, locations = spatial_points)
 
-fit_var = gstat::fit.variogram(object = var, model = gstat::vgm(psill = 10.1, nugget = 3.7, range = 90000, model = "Gau"))
+fit_var = gstat::fit.variogram(object = var, model = gstat::vgm(psill = 0.2, nugget = 0.01, range = 20, model = "Exp"))
 
 grid_cells <- st_make_grid(st_bbox(spatial_points), cellsize = c(0.1, 0.1))
-krig = gstat::krige(formula = temperature~1, locations = spatial_points, newdata = grid_cells, model = fit_var)
 
-r <- raster(krig) #ovako je u vjezbama, ali ne dobivam ništa pod data
-r.m <- mask(r, croatia_shapefile)
+# Kriging interpolation
+krig <- gstat::krige(formula = temperature~1, locations = spatial_points, newdata = grid_cells, model = fit_var)
+
+
+#do ovdje radi
+r <- raster(krig)
+krig_raster <- raster::rasterize(krig@coords, krig$var1.pred,
+                                 extent = extent(c(min(krig@coords[, 1]), max(krig@coords[, 1]),
+                                                   min(krig@coords[, 2]), max(krig@coords[, 2]))),
+                                 crs = st_crs(croatia_shapefile))
+
+
+# Project raster to the same CRS as Croatia shapefile
+krig_raster <- raster::projectRaster(krig_raster, crs = st_crs(croatia_shapefile))
+
+# Mask the raster with the Croatia shapefile
+krig_raster_masked <- raster::mask(krig_raster, croatia_shapefile)
+
+
+# Create the map
+tm_shape(croatia_shapefile) +
+  tm_borders() +
+  tm_fill("kriged_temperature", palette = "RdYlBu", style = "cont", title = "Kriged Temperature") +
+  tm_layout +
+  tm_legend(outside = TRUE)
+
+
+raster_result <- rasterize(grid_cells, krig, field = 1)
 
 # Plot the kriged results with specified breaks and colors
 tm_shape(r.M) +
