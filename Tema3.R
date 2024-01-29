@@ -1,17 +1,19 @@
+rm(list=ls())
+install.packages("sf")
 library(sf)
-library(leaflet)
-library(osmdata)
-library(rvest)
-library(dplyr)
-library(lubridate)
-library(tmaptools)
-library(sp)
-library(raster)
-library(gstat)
-library(tmap)
-library(spatstat)
-library(maptools)
-library(raster)
+# library(leaflet)
+# library(osmdata)
+# library(rvest)
+# library(dplyr)
+# library(lubridate)
+# library(tmaptools)
+# library(sp)
+# library(raster)
+# library(gstat)
+# library(tmap)
+# library(spatstat)
+# library(maptools)
+# library(raster)
 
 data_directory <- paste0(getwd(),"/data")
 croatia_shapefile <- read_sf("/Users/frangrenko/Developer/faks/lokacije/hr_1km.shp")
@@ -131,6 +133,7 @@ mark_locations <- function() {
   
   # Display the map
   map
+  print(map)
   
   
   
@@ -139,18 +142,16 @@ mark_locations <- function() {
   return(return_list)
 }
 
-spatial_points <- function(result_df){
-  pts <- SpatialPoints(result_df)
+spatial_points <- function(result_df) {
+  sf_pts <- st_as_sf(result_df, coords = c("longitude", "latitude"), crs = st_crs(4326))
   
-  class (pts)
-  showDefault(pts)
-  
-  df <- data.frame(ID=1:nrow(result_df))
-  ptsdf <- SpatialPointsDataFrame(pts, data=df)
-  
-  plot(ptsdf)
-  return(ptsdf)
+  plot(sf_pts)
+  return(sf_pts)
 }
+
+
+
+
 
 
 scraper()
@@ -160,52 +161,41 @@ locations <- mark_locations_data$locations
 stations <- mark_locations_data$stations
 temperatures <- mark_locations_data$temperatures
 
-spatial_points <- spatial_points(locations_data)
+spatial_points <- st_as_sf(stations, coords = c("longitude", "latitude"), crs = st_crs(4326))
 
-kriging <- function(locations, temperatures, grid_resolution = 0.1) {
+# Add temperature information to spatial points
+spatial_points$temperatures <- temperatures
 
-  locations$X <- coordinates(locations)[, 1]
-  locations$Y <- coordinates(locations)[, 2]
-  
-  # Create a regular grid for kriging
-  grid <- expand.grid(X = seq(min(locations$X), max(locations$X), by = grid_resolution),
-                      Y = seq(min(locations$Y), max(locations$Y), by = grid_resolution))
-  grid_nrow <- nrow(grid)
-  coordinates(grid) <- c("X", "Y")
-  
-  # Convert to SpatialPointsDataFrame
-  points_grid <- SpatialPointsDataFrame(grid, data.frame(ID = 1:grid_nrow))
-  
-  # Fit a second-order polynomial model
-  f.2 <- as.formula(temperatures ~ X + Y + I(X*X) + I(Y*Y) + I(X*Y))
-  m.2 <- lm(f.2, data = locations)
-  
-  # Predict temperatures using the polynomial model
-  temperatures_prediction <- predict(m.2, newdata = points_grid)
-  
-  # Add prediction to the grid data
-  grid$temperature_prediction <- temperatures_prediction
-  r <- raster(grid)
-  
-  # Specify the projection of raster to EPSG:4326 (assuming long lat coordinates)
-  projection(r) <- CRS("+proj=longlat +datum=WGS84")
-  
-  # Mask the raster to the shape of Croatia
-  r.m <- mask(r, croatia_shapefile)
-  
-  # Create tmap object
-  tm_result <- tm_shape(r.m) +
-    tm_raster(n = 10, palette = "RdBu", title = "Predicted temperature") +
-    tm_shape(locations) + tm_dots(size = 0.2) +
-    tm_legend(legend.outside = TRUE)
-  
-  # Print the map
-  print(tm_result)
-  
-  # Return the tmap object
-  return(tm_result)
-}
+variogram_model <- variogram(temperatures ~ 1, data = spatial_points)
+
+
+# Example initial values (you may need to adjust these based on your data)
+initial_values <- c(range = 1000, sill = 200, nugget = 20)
+
+# Fit variogram with custom initial values
+kriging_model <- fit.variogram(variogram_model, model = vgm("Sph", psill = initial_values[2], range = initial_values[1], nugget = initial_values[3]))
+
+
+# Create a gstat object
+kriging_gstat <- gstat(id = "temperatures", formula = temperatures ~ 1, data = spatial_points, model = kriging_model)
+
 
 # Perform kriging
-kriging_result <- kriging(mark_locations_data$stations, mark_locations_data$temperatures)
+# Perform kriging
+# Create a raster grid covering your study area
+raster_grid <- raster::raster(extent(croatia_shapefile), resolution = c(0.1, 0.1))
+
+# Convert the spatial points to a raster grid
+spatial_points_raster <- rasterize(spatial_points, raster_grid, field = "temperatures")
+
+kriging_result <- predict(kriging_gstat, raster_grid)
+kriging_raster <- raster::raster(kriging_result$var1.pred)
+
+# Plot the digital map with contours of Croatia
+tm_shape(croatia_shapefile) +
+  tm_borders() +
+  tm_raster(kriging_raster, palette = "RdYlBu", title = "Temperature") +
+  tm_layout(title = "Spatial Distribution of Temperature")
+
+
 
